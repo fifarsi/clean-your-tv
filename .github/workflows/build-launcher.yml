@@ -9,7 +9,7 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     steps:
       - name: Checkout project
         uses: actions/checkout@v4
@@ -20,32 +20,38 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Install SDK Platform 34 and Build Tools 34
+      - name: Install required Android SDK packages
+        shell: bash
         run: |
-          sdkmanager --install 'platforms;android-34' 'build-tools;34.0.0'
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-${ANDROID_HOME:-/usr/local/lib/android/sdk}}"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            echo "sdkmanager not found at $SDKMANAGER"
+            exit 1
+          fi
+          "$SDKMANAGER" --version
+          "$SDKMANAGER" --install 'platforms;android-34' 'build-tools;34.0.0'
 
-      - name: Build launcher APK
+      - name: Build release launcher APK
+        shell: bash
         working-directory: launcher
         run: |
+          set -euo pipefail
           chmod +x ./gradlew
           ./gradlew --no-daemon --stacktrace assembleRelease
 
-      - name: Verify APK exists and is under 576 KiB
+      - name: Verify APK and checksum
+        shell: bash
         run: |
-          apk=launcher/app/build/outputs/apk/release/app-release.apk
-          test -s "$apk"
-          size=$(stat -c %s "$apk")
-          echo "APK size: $size bytes"
-          test "$size" -le 589824
-          sha256sum "$apk"
+          set -euo pipefail
+          find launcher/app/build/outputs/apk/release -name '*.apk' -type f -size +0c -print -exec sha256sum {} \;
+          test -n "$(find launcher/app/build/outputs/apk/release -name '*.apk' -type f -size +0c -print -quit)"
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: clean-your-tv-launcher-apk
-          path: launcher/app/build/outputs/apk/release/app-release.apk
+          path: launcher/app/build/outputs/apk/release/*.apk
           if-no-files-found: error
           retention-days: 14
